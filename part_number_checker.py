@@ -22,6 +22,7 @@ CODE_PART_RE = re.compile(
 )
 FIRST_TOKEN_RE = re.compile(r"^\W*(\w+)", re.IGNORECASE)
 WINDOWS_DRIVE_RE = re.compile(r"^(?P<drive>[a-zA-Z]):[\\/]*(?P<tail>.*)$")
+WHITESPACE_RE = re.compile(r"\s+")
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ def extract_decimal_and_detail(path: Path) -> tuple[str, str]:
 
 
 def detail_key(detail_text: str) -> str:
-    text = detail_text.strip().lower().replace("х", "x")
+    text = normalize_detail_text(detail_text)
     match = FIRST_TOKEN_RE.search(text)
     if not match:
         return ""
@@ -86,6 +87,11 @@ def detail_key(detail_text: str) -> str:
     token = match.group(1)
     base = re.sub(r"\d.*$", "", token).strip("_-")
     return base or token
+
+
+def normalize_detail_text(detail_text: str) -> str:
+    text = detail_text.strip().lower().replace("х", "x").replace("ё", "е")
+    return WHITESPACE_RE.sub(" ", text)
 
 
 def decimal_sort_key(value: str) -> tuple[tuple[int, ...], str]:
@@ -255,7 +261,7 @@ def escape(value: object) -> str:
 
 
 def display_name_key(entry: FileEntry) -> str:
-    return entry.detail_text.strip().lower().replace("х", "x")
+    return normalize_detail_text(entry.detail_text)
 
 
 def make_display_entries(group: NumberGroup, compact: bool) -> list[DisplayEntry]:
@@ -280,7 +286,7 @@ def make_display_entries(group: NumberGroup, compact: bool) -> list[DisplayEntry
     if not compact:
         return display_entries
 
-    if len(display_entries) <= 1:
+    if len(display_entries) <= 1 or len(group.detail_keys) <= 1:
         return []
 
     repeated_name_entries = [entry for entry in display_entries if len(entry.entries) > 1]
