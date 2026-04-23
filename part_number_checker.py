@@ -254,17 +254,17 @@ def escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
-def file_stem_key(entry: FileEntry) -> str:
-    return entry.path.stem.strip().lower().replace("х", "x")
+def display_name_key(entry: FileEntry) -> str:
+    return entry.detail_text.strip().lower().replace("х", "x")
 
 
 def make_display_entries(group: NumberGroup, compact: bool) -> list[DisplayEntry]:
-    entries_by_stem: dict[str, list[FileEntry]] = defaultdict(list)
+    entries_by_name: dict[str, list[FileEntry]] = defaultdict(list)
     for entry in group.entries:
-        entries_by_stem[file_stem_key(entry)].append(entry)
+        entries_by_name[display_name_key(entry)].append(entry)
 
     display_entries: list[DisplayEntry] = []
-    for entries in entries_by_stem.values():
+    for entries in entries_by_name.values():
         sorted_entries = sorted(entries, key=lambda item: (item.extension, item.relative_path.lower()))
         extensions = sorted({entry.extension or "без расширения" for entry in sorted_entries})
         display_entries.append(
