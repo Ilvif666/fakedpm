@@ -1,0 +1,17 @@
+[Unit]
+Description=Part Number Checker web server
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/mnt/timez_s
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/projects/fakedpm
+ExecStart=/usr/bin/python3 /home/pi/projects/fakedpm/part_number_checker.py '/mnt/timez_s/test/Проекты/T-6-690' --host 0.0.0.0 --port 8765 --no-browser --drive-map S=/mnt/timez_s
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -21,6 +21,7 @@ CODE_PART_RE = re.compile(
     re.IGNORECASE,
 )
 FIRST_TOKEN_RE = re.compile(r"^\W*(\w+)", re.IGNORECASE)
+WINDOWS_DRIVE_RE = re.compile(r"^(?P<drive>[a-zA-Z]):[\\/]*(?P<tail>.*)$")
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,36 @@ def empty_result(root: Path, error: str) -> ScanResult:
     )
 
 
+def parse_drive_maps(values: list[str]) -> dict[str, str]:
+    drive_maps: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"Неверный формат маппинга диска: {value!r}. Нужно вроде S=/mnt/timez_s")
+
+        drive, mount_point = value.split("=", 1)
+        drive = drive.strip().rstrip(":").upper()
+        mount_point = mount_point.strip()
+        if len(drive) != 1 or not drive.isalpha() or not mount_point:
+            raise ValueError(f"Неверный формат маппинга диска: {value!r}. Нужно вроде S=/mnt/timez_s")
+
+        drive_maps[drive] = mount_point.replace("\\", "/").rstrip("/")
+
+    return drive_maps
+
+
+def normalize_root_text(root_text: str, drive_maps: dict[str, str]) -> str:
+    match = WINDOWS_DRIVE_RE.match(root_text.strip())
+    if not match:
+        return root_text
+
+    mount_point = drive_maps.get(match.group("drive").upper())
+    if mount_point is None:
+        return root_text
+
+    tail = match.group("tail").replace("\\", "/").strip("/")
+    return f"{mount_point}/{tail}" if tail else mount_point
+
+
 def iter_files(root: Path) -> tuple[list[Path], list[tuple[Path, str]]]:
     files: list[Path] = []
     skipped_dirs: list[tuple[Path, str]] = []
@@ -144,8 +175,9 @@ def iter_files(root: Path) -> tuple[list[Path], list[tuple[Path, str]]]:
     return files, skipped_dirs
 
 
-def scan(root_text: str) -> ScanResult:
-    root = Path(root_text).expanduser()
+def scan(root_text: str, drive_maps: dict[str, str] | None = None) -> ScanResult:
+    normalized_root_text = normalize_root_text(root_text, drive_maps or {})
+    root = Path(normalized_root_text).expanduser()
 
     try:
         root = root.resolve(strict=True)
@@ -666,7 +698,7 @@ class CheckerHandler(BaseHTTPRequestHandler):
         root = query.get("root", [self.server.default_root])[0]
         compact_values = query.get("compact")
         compact = compact_values is None or "1" in compact_values
-        result = scan(root)
+        result = scan(root, self.server.drive_maps)
         body = render_page(result, root, compact)
 
         self.send_response(200)
@@ -680,9 +712,16 @@ class CheckerHandler(BaseHTTPRequestHandler):
 
 
 class CheckerServer(ThreadingHTTPServer):
-    def __init__(self, server_address: tuple[str, int], handler_class: type[BaseHTTPRequestHandler], default_root: str) -> None:
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler_class: type[BaseHTTPRequestHandler],
+        default_root: str,
+        drive_maps: dict[str, str],
+    ) -> None:
         super().__init__(server_address, handler_class)
         self.default_root = default_root
+        self.drive_maps = drive_maps
 
 
 def parse_args() -> argparse.Namespace:
@@ -698,18 +737,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=DEFAULT_HOST, help=f"Адрес сервера. По умолчанию {DEFAULT_HOST}.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Порт сервера. По умолчанию {DEFAULT_PORT}.")
     parser.add_argument("--no-browser", action="store_true", help="Не открывать браузер автоматически.")
+    parser.add_argument(
+        "--drive-map",
+        action="append",
+        default=[],
+        metavar="S=/mnt/timez_s",
+        help="Незаметно заменять Windows-диск на Linux mountpoint. Можно указывать несколько раз.",
+    )
     parser.add_argument("--ext", default="", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    try:
+        drive_maps = parse_drive_maps(args.drive_map)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
     server = None
     last_error: OSError | None = None
 
     for port in range(args.port, args.port + 20):
         try:
-            server = CheckerServer((args.host, port), CheckerHandler, args.root)
+            server = CheckerServer((args.host, port), CheckerHandler, args.root, drive_maps)
             break
         except OSError as exc:
             last_error = exc
