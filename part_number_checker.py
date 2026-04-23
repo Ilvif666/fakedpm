@@ -226,12 +226,13 @@ def scan(root_text: str, drive_maps: dict[str, str] | None = None) -> ScanResult
     for decimal_number, entries in entries_by_number.items():
         sorted_entries = sorted(entries, key=lambda item: (item.detail_key, item.extension, item.relative_path.lower()))
         keys = sorted({entry.detail_key or "(без имени)" for entry in entries})
+        display_name_keys = sorted({normalize_detail_text(entry.detail_text) or "(без имени)" for entry in entries})
         groups.append(
             NumberGroup(
                 decimal_number=decimal_number,
                 entries=sorted_entries,
                 detail_keys=keys,
-                is_suspect=len(entries) > 1 and len(keys) > 1,
+                is_suspect=len(display_name_keys) > 1,
             )
         )
 
@@ -286,11 +287,10 @@ def make_display_entries(group: NumberGroup, compact: bool) -> list[DisplayEntry
     if not compact:
         return display_entries
 
-    if len(display_entries) <= 1 or len(group.detail_keys) <= 1:
+    if len(display_entries) <= 1:
         return []
 
-    repeated_name_entries = [entry for entry in display_entries if len(entry.entries) > 1]
-    return repeated_name_entries or display_entries
+    return display_entries
 
 
 def render_group(group: NumberGroup, compact: bool) -> str:
