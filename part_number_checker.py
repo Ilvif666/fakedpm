@@ -23,6 +23,7 @@ CODE_PART_RE = re.compile(
 FIRST_TOKEN_RE = re.compile(r"^\W*(\w+)", re.IGNORECASE)
 WINDOWS_DRIVE_RE = re.compile(r"^(?P<drive>[a-zA-Z]):[\\/]*(?P<tail>.*)$")
 WHITESPACE_RE = re.compile(r"\s+")
+DASH_SEPARATOR_RE = re.compile(r"\s+-\s*")
 
 
 @dataclass(frozen=True)
@@ -71,9 +72,15 @@ def extract_decimal_and_detail(path: Path) -> tuple[str, str]:
     if not stem:
         return "", ""
 
-    parts = stem.split(maxsplit=1)
-    code_part = parts[0]
-    detail_text = parts[1].strip() if len(parts) > 1 else ""
+    dash_parts = DASH_SEPARATOR_RE.split(stem, maxsplit=1)
+    if len(dash_parts) > 1 and CODE_PART_RE.match(dash_parts[0].strip()):
+        code_part = dash_parts[0].strip()
+        detail_text = dash_parts[1].strip()
+    else:
+        parts = stem.split(maxsplit=1)
+        code_part = parts[0]
+        detail_text = parts[1].strip() if len(parts) > 1 else ""
+
     match = CODE_PART_RE.match(code_part)
     return (match.group("decimal_number"), detail_text) if match else ("", detail_text)
 
@@ -320,10 +327,13 @@ def render_group(group: NumberGroup, compact: bool) -> str:
         )
 
     return f"""
-    <section class="number-group {state_class}">
+    <section class="number-group {state_class}" data-number="{escape(group.decimal_number)}">
         <div class="group-head">
             <h2>{escape(group.decimal_number)}</h2>
-            <span>{escape(state_text)}</span>
+            <div class="group-actions">
+                <span>{escape(state_text)}</span>
+                <button class="hide-group" type="button">Скрыть</button>
+            </div>
         </div>
         <p class="keys">Основа имени: {escape(key_text)}</p>
         <table>
@@ -553,6 +563,14 @@ def render_page(result: ScanResult, current_root: str, compact: bool) -> bytes:
             justify-content: space-between;
         }}
 
+        .group-actions {{
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }}
+
         .group-head h2,
         .panel h2 {{
             margin: 0;
@@ -571,6 +589,34 @@ def render_page(result: ScanResult, current_root: str, compact: bool) -> bytes:
 
         .suspect .group-head span {{
             background: var(--bad);
+        }}
+
+        .hide-group,
+        .show-hidden {{
+            min-height: 30px;
+            border: 1px solid var(--line);
+            background: #fff;
+            color: var(--accent);
+            font-size: 13px;
+            padding: 4px 10px;
+        }}
+
+        .hidden-tools {{
+            display: none;
+            margin-top: 14px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }}
+
+        .hidden-tools.is-visible {{
+            display: flex;
+        }}
+
+        .hidden-tools span {{
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
         }}
 
         .keys {{
@@ -629,7 +675,7 @@ def render_page(result: ScanResult, current_root: str, compact: bool) -> bytes:
         }}
     </style>
 </head>
-<body>
+<body data-root="{escape(str(result.root))}">
     <main>
         <h1>Проверка децимальных номеров файлов</h1>
 
@@ -668,6 +714,11 @@ def render_page(result: ScanResult, current_root: str, compact: bool) -> bytes:
         {error_block}
         {empty_block}
 
+        <section class="panel hidden-tools" id="hidden-tools">
+            <span id="hidden-count">Скрыто позиций: 0</span>
+            <button class="show-hidden" type="button" id="show-hidden">Показать скрытые</button>
+        </section>
+
         <section class="summary">
             <div class="metric">
                 <strong>{escape(result.occupied_count)}</strong>
@@ -690,6 +741,57 @@ def render_page(result: ScanResult, current_root: str, compact: bool) -> bytes:
         {groups_block}
         {skipped_block}
     </main>
+    <script>
+        (() => {{
+            const storageKey = "part-number-checker:hidden:" + document.body.dataset.root;
+            const tools = document.getElementById("hidden-tools");
+            const count = document.getElementById("hidden-count");
+            const showHidden = document.getElementById("show-hidden");
+            const sections = Array.from(document.querySelectorAll(".number-group[data-number]"));
+
+            const loadHidden = () => {{
+                try {{
+                    return new Set(JSON.parse(localStorage.getItem(storageKey) || "[]"));
+                }} catch (_error) {{
+                    return new Set();
+                }}
+            }};
+
+            const saveHidden = (hidden) => {{
+                localStorage.setItem(storageKey, JSON.stringify(Array.from(hidden)));
+            }};
+
+            const updateHiddenTools = (hidden) => {{
+                const hiddenCount = sections.filter((section) => hidden.has(section.dataset.number)).length;
+                count.textContent = `Скрыто позиций: ${{hiddenCount}}`;
+                tools.classList.toggle("is-visible", hiddenCount > 0);
+            }};
+
+            const applyHidden = (hidden) => {{
+                sections.forEach((section) => {{
+                    section.hidden = hidden.has(section.dataset.number);
+                }});
+                updateHiddenTools(hidden);
+            }};
+
+            let hidden = loadHidden();
+            applyHidden(hidden);
+
+            sections.forEach((section) => {{
+                section.querySelector(".hide-group")?.addEventListener("click", () => {{
+                    hidden.add(section.dataset.number);
+                    saveHidden(hidden);
+                    applyHidden(hidden);
+                }});
+            }});
+
+            showHidden.addEventListener("click", () => {{
+                hidden = new Set();
+                saveHidden(hidden);
+                applyHidden(hidden);
+            }});
+        }})();
+    </script>
 </body>
 </html>"""
     return html_text.encode("utf-8")
